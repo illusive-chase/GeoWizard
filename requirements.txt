@@ -1,22 +1,17 @@
-torch == 2.0.1
-torchvision == 0.15.2
-xformers == 0.0.21
-diffusers == 0.25.0
-huggingface_hub == 0.21.3
-opencv-python
-numpy == 1.23.1
-Pillow
+xformers==0.0.23.post1
+diffusers==0.25.0
 h5py
-matplotlib==3.7.5
-scikit-image==0.18.1
+huggingface_hub==0.25.2
+matplotlib
+scikit-image
 gradio==4.11.0
 gradio-imageslider==0.0.16
-trimesh==4.0.5
-tqdm == 4.65.0
-accelerate==0.28.0
+trimesh
+tqdm
+accelerate
 transformers==4.39.1
 imgaug
-GitPython==3.1.40
-pygltflib==1.16.1
-pyvista == 0.37.0
+GitPython
+pygltflib
+pyvista
 fire
