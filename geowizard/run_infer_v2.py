@@ -1,27 +1,19 @@
 # Adapted from Marigold ：https://github.com/prs-eth/Marigold
 
 import argparse
-import os
 import logging
+import os
 
 import numpy as np
 import torch
+from diffusers import AutoencoderKL, DDIMScheduler
 from PIL import Image
-from tqdm.auto import tqdm
-import glob
-import json
-import cv2
-
-import sys
-from models.geowizard_v2_pipeline import DepthNormalEstimationPipeline
-from utils.seed_all import seed_all
-import matplotlib.pyplot as plt
-from utils.depth2normal import *
-
-from diffusers import DiffusionPipeline, DDIMScheduler, AutoencoderKL
-from models.unet_2d_condition import UNet2DConditionModel
-
 from transformers import CLIPTextModel, CLIPTokenizer
+
+from models.geowizard_v2_pipeline import DepthNormalEstimationPipeline
+from models.unet_2d_condition import UNet2DConditionModel
+from utils.depth2normal import *
+from utils.seed_all import seed_all
 
 if __name__=="__main__":
     
@@ -38,7 +30,7 @@ if __name__=="__main__":
         help="pretrained model path from hugging face or local dir",
     )    
     parser.add_argument(
-        "--input_dir", type=str, required=True, help="Input directory."
+        "--input_file", type=str, required=True, help="Input file."
     )
 
     parser.add_argument(
@@ -129,17 +121,8 @@ if __name__=="__main__":
         seed = int(time.time())
     seed_all(seed)
 
-    # Output directories
-    output_dir_color = os.path.join(output_dir, "depth_colored")
-    output_dir_npy = os.path.join(output_dir, "depth_npy")
-    output_dir_normal_npy = os.path.join(output_dir, "normal_npy")
-    output_dir_normal_color = os.path.join(output_dir, "normal_colored")
-    os.makedirs(output_dir, exist_ok=True)
-    os.makedirs(output_dir_color, exist_ok=True)
-    os.makedirs(output_dir_npy, exist_ok=True)
-    os.makedirs(output_dir_normal_npy, exist_ok=True)
-    os.makedirs(output_dir_normal_color, exist_ok=True)
     logging.info(f"output dir = {output_dir}")
+    os.makedirs(output_dir, exist_ok=True)
 
     # -------------------- Device --------------------
     if torch.cuda.is_available():
@@ -148,16 +131,6 @@ if __name__=="__main__":
         device = torch.device("cpu")
         logging.warning("CUDA is not available. Running on CPU will be slow.")
     logging.info(f"device = {device}")
-
-    # -------------------- Data --------------------
-    input_dir = args.input_dir
-    test_files = sorted(os.listdir(input_dir))
-    n_images = len(test_files)
-    if n_images > 0:
-        logging.info(f"Found {n_images} images")
-    else:
-        logging.error(f"No image found")
-        exit(1)
 
     # -------------------- Model --------------------
     if half_precision:
@@ -191,54 +164,36 @@ if __name__=="__main__":
 
     # -------------------- Inference and saving --------------------
     with torch.no_grad():
-        os.makedirs(output_dir, exist_ok=True)
 
-        for test_file in tqdm(test_files, desc="Estimating Depth & Normal", leave=True):
-            rgb_path = os.path.join(input_dir, test_file)
+        # Read input image
+        input_image = Image.open(args.input_file)
 
-            # Read input image
-            input_image = Image.open(rgb_path)
+        # predict the depth & normal here
+        pipe_out = pipe(input_image,
+            denoising_steps = denoise_steps,
+            ensemble_size= ensemble_size,
+            processing_res = processing_res,
+            match_input_res = match_input_res,
+            domain = domain,
+            color_map = color_map,
+            show_progress_bar = True,
+        )
 
-            # predict the depth & normal here
-            pipe_out = pipe(input_image,
-                denoising_steps = denoise_steps,
-                ensemble_size= ensemble_size,
-                processing_res = processing_res,
-                match_input_res = match_input_res,
-                domain = domain,
-                color_map = color_map,
-                show_progress_bar = True,
+        depth_pred: np.ndarray = pipe_out.depth_np
+        depth_colored: Image.Image = pipe_out.depth_colored
+        normal_pred: np.ndarray = pipe_out.normal_np
+        normal_colored: Image.Image = pipe_out.normal_colored
+
+        # Save as npy
+
+        normal_npy_save_path = os.path.join(output_dir, "normal.npy")
+        if os.path.exists(normal_npy_save_path):
+            logging.warning(f"Existing file: '{normal_npy_save_path}' will be overwritten")
+        np.save(normal_npy_save_path, normal_pred)
+
+        normal_colored_save_path = os.path.join(output_dir, "normal.png")
+        if os.path.exists(normal_colored_save_path):
+            logging.warning(
+                f"Existing file: '{normal_colored_save_path}' will be overwritten"
             )
-
-            depth_pred: np.ndarray = pipe_out.depth_np
-            depth_colored: Image.Image = pipe_out.depth_colored
-            normal_pred: np.ndarray = pipe_out.normal_np
-            normal_colored: Image.Image = pipe_out.normal_colored
-
-            # Save as npy
-            rgb_name_base = os.path.splitext(os.path.basename(rgb_path))[0]
-            pred_name_base = rgb_name_base + "_pred"
-            npy_save_path = os.path.join(output_dir_npy, f"{pred_name_base}.npy")
-            if os.path.exists(npy_save_path):
-                logging.warning(f"Existing file: '{npy_save_path}' will be overwritten")
-            np.save(npy_save_path, depth_pred)
-
-            normal_npy_save_path = os.path.join(output_dir_normal_npy, f"{pred_name_base}.npy")
-            if os.path.exists(normal_npy_save_path):
-                logging.warning(f"Existing file: '{normal_npy_save_path}' will be overwritten")
-            np.save(normal_npy_save_path, normal_pred)
-
-            # Colorize
-            depth_colored_save_path = os.path.join(output_dir_color, f"{pred_name_base}_colored.png")
-            if os.path.exists(depth_colored_save_path):
-                logging.warning(
-                    f"Existing file: '{depth_colored_save_path}' will be overwritten"
-                )
-            depth_colored.save(depth_colored_save_path)
-
-            normal_colored_save_path = os.path.join(output_dir_normal_color, f"{pred_name_base}_colored.png")
-            if os.path.exists(normal_colored_save_path):
-                logging.warning(
-                    f"Existing file: '{normal_colored_save_path}' will be overwritten"
-                )
-            normal_colored.save(normal_colored_save_path)
+        normal_colored.save(normal_colored_save_path)
